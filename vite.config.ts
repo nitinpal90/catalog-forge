@@ -5,7 +5,7 @@ export default defineConfig({
   plugins: [react()],
   base: '/',
   define: {
-    // Correctly bridges environment variables from Vercel to the browser
+    // This allows the code to access the environment variable in the browser
     'process.env.API_KEY': JSON.stringify(process.env.API_KEY),
   },
   build: {
