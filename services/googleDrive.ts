@@ -2,12 +2,11 @@ import { DriveFile } from '../types';
 
 /**
  * Accesses API_KEY from the environment.
- * In Netlify, this comes from Site Configuration > Environment Variables.
  */
 const DRIVE_API_KEY = process.env.API_KEY;
 
 /**
- * Extracts the ID using the exact logic from your working 'Final Engine'
+ * Exact ID extraction logic from your working script.
  */
 export const extractFolderId = (url: string): string | null => {
   if (!url) return null;
@@ -16,20 +15,19 @@ export const extractFolderId = (url: string): string | null => {
                 url.match(/\/d\/([a-zA-Z0-9-_]+)/);
   
   if (match) return match[1];
-  // Fallback for raw IDs
-  if (url.trim().length >= 25) return url.trim();
+  if (url.trim().length >= 25 && /^[a-zA-Z0-9-_]+$/.test(url.trim())) return url.trim();
   return null;
 };
 
 const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
 
 /**
- * Standardized fetch with retry (Direct API calls for metadata)
- * Matching the working tool's logic: No proxies for folder listing.
+ * Robust fetcher matching your working engine's direct call style.
  */
 async function fetchWithRetry(url: string, retries = 3): Promise<Response> {
+  // Guard against missing key
   if (!DRIVE_API_KEY || DRIVE_API_KEY === "" || DRIVE_API_KEY === "undefined") {
-    throw new Error('CONFIG_ERROR: API_KEY is missing. Add it to Netlify Env Variables.');
+    throw new Error('CONFIG_ERROR: API_KEY is missing in your environment settings.');
   }
 
   for (let i = 0; i < retries; i++) {
@@ -37,16 +35,15 @@ async function fetchWithRetry(url: string, retries = 3): Promise<Response> {
       const res = await fetch(url);
       
       if (res.status === 403 || res.status === 429) {
-        const errBody = await res.json().catch(() => ({}));
-        if (errBody.error?.message?.includes('API key not valid')) {
-          throw new Error(`API_KEY_INVALID: Check your Google Cloud Console Key.`);
-        }
-        await delay(1500 * (i + 1));
-        continue; 
+        await delay(1000 * (i + 1));
+        continue;
       }
       
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({ error: { message: `HTTP ${res.status}` } }));
+        if (errorData.error?.message?.includes('API key not valid')) {
+          throw new Error('API_KEY_INVALID: Your Google API Key is rejected. Check Cloud Console.');
+        }
         throw new Error(errorData.error?.message || 'Access Denied');
       }
       
@@ -54,15 +51,15 @@ async function fetchWithRetry(url: string, retries = 3): Promise<Response> {
     } catch (e: any) {
       if (e.message.includes('API_KEY_INVALID')) throw e;
       if (i === retries - 1) throw e;
-      await delay(1000);
+      await delay(500);
     }
   }
   throw new Error('Connection failed after multiple retries.');
 }
 
 /**
- * Fetches all files using pagination (Fix for 100+ images)
- * Uses pageSize=1000 for maximum efficiency.
+ * Industrial Pagination Logic: Handles 100+ files per folder.
+ * Matches your working tool's 'fetchAllFiles' function.
  */
 export async function fetchAllInFolder(folderId: string): Promise<DriveFile[]> {
   let allFiles: DriveFile[] = [];
@@ -70,7 +67,8 @@ export async function fetchAllInFolder(folderId: string): Promise<DriveFile[]> {
 
   do {
     const query = `'${folderId}' in parents and trashed=false`;
-    let url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&key=${DRIVE_API_KEY}&fields=nextPageToken,files(id,name,mimeType)&pageSize=1000`;
+    // Added 'parents' to fields to enable parent-child mapping for structured naming
+    let url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&key=${DRIVE_API_KEY}&fields=nextPageToken,files(id,name,mimeType,parents)&pageSize=1000`;
     
     if (pageToken) url += `&pageToken=${pageToken}`;
 
@@ -85,51 +83,47 @@ export async function fetchAllInFolder(folderId: string): Promise<DriveFile[]> {
 }
 
 /**
- * Industrial Recursive Scanner (Matches 'crawlFolder' in your working code)
+ * Deep Crawl Logic: Matches your 'crawlFolder' function.
+ * Recursively locates all images in all subdirectories and collects folder metadata.
+ * Returns both files and a map of folder IDs to names for structured renaming.
  */
 export async function fetchFolderContents(
   folderId: string,
   rootName: string = "Root",
   onLog?: (msg: string, type?: 'info' | 'success' | 'error' | 'warning') => void
-): Promise<{ files: DriveFile[], folders: Map<string, string> }> {
+): Promise<{ files: DriveFile[]; folders: Map<string, string> }> {
   const files: DriveFile[] = [];
   const folders = new Map<string, string>();
+  folders.set(folderId, rootName);
 
-  async function crawl(id: string, name: string) {
-    folders.set(id, name);
+  async function crawl(id: string) {
     try {
       const items = await fetchAllInFolder(id);
-      const subTasks = [];
-      
       for (const item of items) {
         if (item.mimeType === 'application/vnd.google-apps.folder') {
-          onLog?.(`Subfolder Found: ${item.name}`, 'info');
-          subTasks.push(crawl(item.id, item.name));
+          onLog?.(`Scanning Subdirectory: ${item.name}`, 'info');
+          // Map folder ID to name for subsequent lookup in renaming logic
+          folders.set(item.id, item.name);
+          await crawl(item.id);
         } else {
-          // Identify image assets
           const isImage = /\.(jpg|jpeg|png|webp|gif|bmp|tiff|jfif)$/i.test(item.name) || 
                           item.mimeType.startsWith('image/');
-          if (isImage) {
-            // Store the file and its immediate parent ID for naming
-            const fileWithParent = { ...item, parents: [id] };
-            files.push(fileWithParent);
-          }
+          if (isImage) files.push(item);
         }
       }
-      await Promise.all(subTasks);
     } catch (e: any) {
-      onLog?.(`[${name}] Scan Failed: ${e.message}`, 'error');
-      if (e.message.includes('CONFIG_ERROR') || e.message.includes('API_KEY_INVALID')) throw e;
+      onLog?.(`Scan error in folder ${id}: ${e.message}`, 'error');
+      if (e.message.includes('API_KEY_INVALID')) throw e;
     }
   }
 
   onLog?.(`Initializing Scan: ${rootName}...`, 'info');
-  await crawl(folderId, rootName);
+  await crawl(folderId);
   return { files, folders };
 }
 
 /**
- * Downloads a file using the media endpoint (Exact same as working tool)
+ * High-Speed Binary Extraction: Downloads files directly.
  */
 export const downloadDriveFile = async (id: string): Promise<Blob> => {
   const url = `https://www.googleapis.com/drive/v3/files/${id}?alt=media&key=${DRIVE_API_KEY}`;
@@ -141,7 +135,7 @@ export const downloadDriveFile = async (id: string): Promise<Blob> => {
       if (b.size > 100 && !b.type.includes('html')) return b;
     }
   } catch (e) {
-    // Fallback only if direct fails
+    // Failover for strict network environments
     const proxyUrl = `https://wsrv.nl/?url=${encodeURIComponent(`https://drive.google.com/uc?export=download&id=${id}`)}&output=jpg&q=100`;
     const res = await fetch(proxyUrl);
     if (res.ok) return await res.blob();
