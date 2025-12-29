@@ -1,12 +1,12 @@
-
 import { DriveFile } from '../types';
 
 /**
  * Industrial Security: 
- * Safely checks for VITE_DRIVE_API_KEY from Vercel/Vite environment.
- * Uses optional chaining (?.) to prevent crashes if 'env' is undefined.
+ * Accesses API_KEY from the environment.
+ * The key is obtained exclusively from process.env.API_KEY.
  */
-const DRIVE_API_KEY = (import.meta as any)?.env?.VITE_DRIVE_API_KEY || "AIzaSyDSe4H2fLR_66pUFYGQ6dUWtOPstxH9hr4";
+// Fix: Use process.env.API_KEY exclusively as per guidelines and avoid hardcoded fallback or import.meta.env
+const DRIVE_API_KEY = process.env.API_KEY;
 
 export const extractFolderId = (url: string): string | null => {
   if (!url) return null;
@@ -93,20 +93,17 @@ export async function fetchFolderContents(
 }
 
 export const downloadDriveFile = async (id: string): Promise<Blob> => {
-  // Method 1: Official API (Best Quality)
   const url = `https://www.googleapis.com/drive/v3/files/${id}?alt=media&key=${DRIVE_API_KEY}`;
   try {
     const res = await fetch(url);
     if (res.ok) {
       const b = await res.blob();
-      // Validate that we didn't just get an HTML error page back
       if (b.size > 100 && !b.type.includes('html')) return b;
     }
   } catch (e) {
     console.debug(`Drive API fetch failed for ${id}, switching to failover...`);
   }
 
-  // Method 2: Industrial Failover via Multi-Proxy
   const failoverUrls = [
     `https://wsrv.nl/?url=${encodeURIComponent(`https://drive.google.com/uc?export=download&id=${id}`)}&output=jpg&q=100`,
     `https://corsproxy.io/?${encodeURIComponent(`https://drive.google.com/uc?export=download&id=${id}`)}`,
