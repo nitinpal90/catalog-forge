@@ -1,0 +1,5 @@
+{
+  "name": "CatalogForge",
+  "description": "Industrial-grade e-commerce image engine. High-concurrency bulk downloads from Google Drive, Dropbox, and Postimg with automated SKU-based renaming and folder structuring.",
+  "requestFramePermissions": []
+}
