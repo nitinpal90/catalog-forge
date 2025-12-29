@@ -1,4 +1,3 @@
-
 import React, { useState, useRef } from 'react';
 import { LogEntry, ProcessedFile, DriveFile, BatchSummary } from '../../types';
 import { extractFolderId, fetchFolderContents, downloadDriveFile } from '../../services/googleDrive';
@@ -67,38 +66,33 @@ const DriveDownloader: React.FC = () => {
       
       try {
         const folderId = extractFolderId(item.urls[0]);
-        if (!folderId) throw new Error("Invalid Drive Link");
+        if (!folderId) throw new Error("Invalid Drive Link. Check if the link contains /folders/ or ?id=");
 
-        const { files, folders } = await fetchFolderContents(folderId, safeFolderName, (msg) => addLog(`   > ${msg}`));
+        const { files, folders } = await fetchFolderContents(folderId, safeFolderName, (msg) => addLog(msg));
         
         if (files.length === 0) {
-          addLog(`   > SKU Warning: No assets detected in remote folder.`, 'warning');
+          addLog(`   > SKU Warning: No images detected. Ensure folder is Shared publicly.`, 'warning');
           setStats(s => ({ ...s, processed: s.processed + 1 }));
-          summaries.push({ styleName: safeFolderName, sourceLink: item.urls[0], status: 'Failed', filesFound: 0, notes: "Remote folder returned 0 images." });
+          summaries.push({ styleName: safeFolderName, sourceLink: item.urls[0], status: 'Failed', filesFound: 0, notes: "No images found." });
         } else {
           addLog(`   > Resolved ${files.length} images. Streaming binary packets...`);
 
           const { results: downloadedFiles, failed } = await downloadBatch<DriveFile>(
             files,
             async (df, idx) => {
-              try {
-                const blob = await downloadDriveFile(df.id);
-                const parentName = folders.get(df.parents?.[0] || "") || safeFolderName;
-                const ext = getExtension(blob, df.name);
-                
-                return {
-                  originalName: df.name,
-                  newName: `${parentName}_${idx + 1}.${ext}`,
-                  blob,
-                  folder: parentName,
-                  size: blob.size
-                };
-              } catch (fileErr: any) {
-                addLog(`      ! Failed asset: ${df.name}`, 'error');
-                throw fileErr;
-              }
+              const blob = await downloadDriveFile(df.id);
+              const parentName = folders.get(df.parents?.[0] || "") || safeFolderName;
+              const ext = getExtension(blob, df.name);
+              
+              return {
+                originalName: df.name,
+                newName: `${parentName}_${idx + 1}.${ext}`,
+                blob,
+                folder: parentName,
+                size: blob.size
+              };
             },
-            16,
+            12, // Reduced concurrency slightly for better stability
             undefined,
             abortControllerRef.current?.signal || undefined
           );
@@ -113,7 +107,7 @@ const DriveDownloader: React.FC = () => {
             }));
             addLog(`   > SKU Finished: ${downloadedFiles.length} assets synced.`, 'success');
           } else {
-            addLog(`   > Error: All ${files.length} items failed to stream.`, 'error');
+            addLog(`   > Error: All items failed to download. Check sharing settings.`, 'error');
             setStats(s => ({ ...s, processed: s.processed + 1, errors: s.errors + files.length }));
           }
 
@@ -122,7 +116,7 @@ const DriveDownloader: React.FC = () => {
             sourceLink: item.urls[0],
             status: downloadedFiles.length > 0 ? (failed > 0 ? 'Partial' : 'Success') : 'Failed',
             filesFound: downloadedFiles.length,
-            notes: failed > 0 ? `${failed} items failed extraction.` : "Complete sync."
+            notes: failed > 0 ? `${failed} items failed.` : "Sync complete."
           });
         }
       } catch (e: any) {
@@ -137,7 +131,7 @@ const DriveDownloader: React.FC = () => {
       setResults({ files: allFiles, summaries });
       addLog(`Global Sync Successful. Captured ${allFiles.length} assets.`, 'success');
     } else {
-      addLog(`Fatal Engine Error: Forge yielded 0 final assets. Check connectivity.`, 'error');
+      addLog(`Fatal Error: 0 assets yielded. Check permissions and API Key.`, 'error');
     }
     
     setIsProcessing(false);
@@ -157,6 +151,8 @@ const DriveDownloader: React.FC = () => {
       a.click();
       window.URL.revokeObjectURL(dlUrl);
       addLog("Catalog export successful.", "success");
+    } catch (e: any) {
+      addLog(`Zip Error: ${e.message}`, 'error');
     } finally {
       setIsProcessing(false);
       setZipProgress(0);

@@ -53,7 +53,8 @@ const WebDownloader: React.FC = () => {
         addLog(`Analyzing SKU: ${item.folderName} (${item.urls.length} links)`);
         const flatForSku = item.urls.map((url, i) => ({ url, folderName: item.folderName, index: i + 1 }));
         
-        const { results: skuResults, failed } = await downloadBatch(
+        // Fix: Explicitly provide the generic type for downloadBatch to resolve TS "unknown" property errors
+        const { results: skuResults, failed } = await downloadBatch<{ url: string, folderName: string, index: number }>(
           flatForSku,
           async (task, _, sig) => {
             const blob = await smartFetch(task.url, sig);
