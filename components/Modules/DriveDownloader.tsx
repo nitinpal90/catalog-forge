@@ -66,12 +66,13 @@ const DriveDownloader: React.FC = () => {
       
       try {
         const folderId = extractFolderId(item.urls[0]);
-        if (!folderId) throw new Error("Invalid Drive Link. Check if the link contains /folders/ or ?id=");
+        if (!folderId) throw new Error(`Invalid Drive Link in row "${item.folderName}". Ensure column B contains a valid link.`);
 
-        const { files, folders } = await fetchFolderContents(folderId, safeFolderName, (msg) => addLog(msg));
+        // Fix: Explicitly type the parameters of the onLog callback passed to fetchFolderContents.
+        const { files, folders } = await fetchFolderContents(folderId, safeFolderName, (msg: string, type?: LogEntry['type']) => addLog(msg, type));
         
         if (files.length === 0) {
-          addLog(`   > SKU Warning: No images detected. Ensure folder is Shared publicly.`, 'warning');
+          addLog(`   > SKU Warning: No images detected. Ensure folder is Shared as "Anyone with link".`, 'warning');
           setStats(s => ({ ...s, processed: s.processed + 1 }));
           summaries.push({ styleName: safeFolderName, sourceLink: item.urls[0], status: 'Failed', filesFound: 0, notes: "No images found." });
         } else {
@@ -92,7 +93,7 @@ const DriveDownloader: React.FC = () => {
                 size: blob.size
               };
             },
-            12, // Reduced concurrency slightly for better stability
+            10, // Concurrency 10 for high stability
             undefined,
             abortControllerRef.current?.signal || undefined
           );
@@ -123,6 +124,9 @@ const DriveDownloader: React.FC = () => {
         addLog(`   > Sync Error at ${safeFolderName}: ${e.message}`, 'error');
         setStats(s => ({ ...s, errors: s.errors + 1, processed: s.processed + 1 }));
         summaries.push({ styleName: safeFolderName, sourceLink: item.urls[0], status: 'Failed', filesFound: 0, notes: e.message });
+        
+        // If it's a configuration error (API Key), stop everything
+        if (e.message.includes('API_KEY')) break;
       }
       setProgress(Math.round((summaries.length / items.length) * 100));
     }
@@ -131,7 +135,7 @@ const DriveDownloader: React.FC = () => {
       setResults({ files: allFiles, summaries });
       addLog(`Global Sync Successful. Captured ${allFiles.length} assets.`, 'success');
     } else {
-      addLog(`Fatal Error: 0 assets yielded. Check permissions and API Key.`, 'error');
+      addLog(`Fatal Error: 0 assets yielded. Verify project settings.`, 'error');
     }
     
     setIsProcessing(false);
