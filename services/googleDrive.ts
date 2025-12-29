@@ -5,7 +5,6 @@ import { DriveFile } from '../types';
  * Accesses API_KEY from the environment.
  * The key is obtained exclusively from process.env.API_KEY.
  */
-// Fix: Use process.env.API_KEY exclusively as per guidelines and avoid hardcoded fallback or import.meta.env
 const DRIVE_API_KEY = process.env.API_KEY;
 
 export const extractFolderId = (url: string): string | null => {
