@@ -20,13 +20,13 @@ const DriveDownloader: React.FC = () => {
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const addLog = (message: string, type: LogEntry['type'] = 'info') => {
-    setLogs(prev => [...prev, { timestamp: new Date(), message, type }].slice(-150));
+    setLogs(prev => [...prev, { timestamp: new Date(), message, type }].slice(-200));
   };
 
   const handleSheetData = (items: { folderName: string, urls: string[] }[]) => {
     setPendingItems(items);
     setStats(s => ({ ...s, skus: items.length }));
-    addLog(`Industrial Sheet Loaded: ${items.length} SKUs detected.`, 'success');
+    addLog(`Catalog Sheet Detected: ${items.length} SKUs added to queue.`, 'success');
   };
 
   const reset = () => {
@@ -38,7 +38,7 @@ const DriveDownloader: React.FC = () => {
     setUrl('');
     setActiveTask('');
     setPendingItems([]);
-    addLog('System reset complete.', 'info');
+    addLog('Batch reset. System standby.', 'info');
   };
 
   const processBatch = async () => {
@@ -55,27 +55,27 @@ const DriveDownloader: React.FC = () => {
     const allFiles: ProcessedFile[] = [];
     const summaries: BatchSummary[] = [];
 
-    addLog(`Drive Forge v13.0: Starting Batch Scan...`, 'success');
+    addLog(`Industrial Sync Engine v13.0: Startup Initialized`, 'success');
 
     for (const item of items) {
       if (abortControllerRef.current?.signal.aborted) break;
 
       const safeFolderName = item.folderName.trim().replace(/\s+/g, '_') || "Uncategorized";
       setActiveTask(`Syncing: ${safeFolderName}`);
-      addLog(`[${safeFolderName}] Initializing scan...`);
+      addLog(`[${safeFolderName}] Resolving Drive Map...`);
       
       try {
         const folderId = extractFolderId(item.urls[0]);
-        if (!folderId) throw new Error("Could not extract ID from link.");
+        if (!folderId) throw new Error("Link format unrecognized.");
 
         const { files, folders } = await fetchFolderContents(folderId, safeFolderName, (msg, type) => addLog(msg, type));
         
         if (files.length === 0) {
-          addLog(`[${safeFolderName}] No images found. Ensure link is public.`, 'warning');
+          addLog(`[${safeFolderName}] 0 assets located. Ensure link is public.`, 'warning');
           setStats(s => ({ ...s, processed: s.processed + 1 }));
-          summaries.push({ styleName: safeFolderName, sourceLink: item.urls[0], status: 'Failed', filesFound: 0, notes: "Zero assets found." });
+          summaries.push({ styleName: safeFolderName, sourceLink: item.urls[0], status: 'Failed', filesFound: 0, notes: "No images detected." });
         } else {
-          addLog(`[${safeFolderName}] Downloading ${files.length} assets...`);
+          addLog(`[${safeFolderName}] Binary Stream: Extracting ${files.length} images...`);
 
           const { results: downloadedFiles, failed } = await downloadBatch<DriveFile>(
             files,
@@ -86,7 +86,7 @@ const DriveDownloader: React.FC = () => {
               
               return {
                 originalName: df.name,
-                newName: `${parentName}_${idx + 1}.${ext}`,
+                newName: `${parentName.replace(/\s+/g, '_')}_${idx + 1}.${ext}`,
                 blob,
                 folder: parentName,
                 size: blob.size
@@ -105,7 +105,7 @@ const DriveDownloader: React.FC = () => {
               assets: s.assets + downloadedFiles.length,
               errors: s.errors + failed
             }));
-            addLog(`[${safeFolderName}] Sync Success: ${downloadedFiles.length} files saved.`, 'success');
+            addLog(`[${safeFolderName}] Finished. Resolved ${downloadedFiles.length} files.`, 'success');
           }
 
           summaries.push({
@@ -113,23 +113,23 @@ const DriveDownloader: React.FC = () => {
             sourceLink: item.urls[0],
             status: downloadedFiles.length > 0 ? (failed > 0 ? 'Partial' : 'Success') : 'Failed',
             filesFound: downloadedFiles.length,
-            notes: failed > 0 ? `${failed} downloads failed.` : "Complete."
+            notes: failed > 0 ? `Issues with ${failed} items.` : "Verified."
           });
         }
       } catch (e: any) {
-        addLog(`[${safeFolderName}] Critical Error: ${e.message}`, 'error');
+        addLog(`[${safeFolderName}] Engine Fault: ${e.message}`, 'error');
         setStats(s => ({ ...s, errors: s.errors + 1, processed: s.processed + 1 }));
         summaries.push({ styleName: safeFolderName, sourceLink: item.urls[0], status: 'Failed', filesFound: 0, notes: e.message });
-        if (e.message.includes('API_KEY')) break;
+        if (e.message.includes('CONFIG_ERROR') || e.message.includes('API_KEY_INVALID')) break;
       }
       setProgress(Math.round((summaries.length / items.length) * 100));
     }
 
     if (allFiles.length > 0) {
       setResults({ files: allFiles, summaries });
-      addLog(`Global sync complete. Packaging ${allFiles.length} files.`, 'success');
+      addLog(`Global Sync Complete. Total: ${allFiles.length} Assets Captured.`, 'success');
     } else {
-      addLog(`Engine yielded zero files. Check API/Permissions.`, 'error');
+      addLog(`Critical: 0 items yielded from sync. Check project configuration.`, 'error');
     }
     
     setIsProcessing(false);
@@ -139,18 +139,18 @@ const DriveDownloader: React.FC = () => {
   const handleZip = async () => {
     if (!results) return;
     setIsProcessing(true);
-    addLog(`Building ZIP archive...`);
+    addLog(`Finalizing Catalog ZIP Package...`);
     try {
       const blob = await createFinalArchive(results.files, results.summaries, (p) => setZipProgress(Math.round(p)));
       const dlUrl = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = dlUrl;
-      a.download = `DriveForge_Batch_${Date.now()}.zip`;
+      a.download = `Catalog_Sync_Export_${Date.now()}.zip`;
       a.click();
       window.URL.revokeObjectURL(dlUrl);
-      addLog("ZIP exported successfully.", "success");
+      addLog("Export complete. Batch successfully standardizied.", "success");
     } catch (e: any) {
-      addLog(`Packaging failed: ${e.message}`, 'error');
+      addLog(`Archive Engine Failure: ${e.message}`, 'error');
     } finally {
       setIsProcessing(false);
       setZipProgress(0);
@@ -162,9 +162,9 @@ const DriveDownloader: React.FC = () => {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
         {[
           { label: 'Total Links', val: stats.skus, color: 'text-slate-400' },
-          { label: 'Finished', val: stats.processed, color: 'text-indigo-500' },
-          { label: 'Assets', val: stats.assets, color: 'text-emerald-500' },
-          { label: 'Errors', val: stats.errors, color: 'text-red-500' },
+          { label: 'Processed', val: stats.processed, color: 'text-indigo-500' },
+          { label: 'Images Saved', val: stats.assets, color: 'text-emerald-500' },
+          { label: 'Failures', val: stats.errors, color: 'text-red-500' },
         ].map((s, i) => (
           <div key={i} className="bg-white dark:bg-white/5 p-8 rounded-[32px] border border-slate-100 dark:border-white/5 shadow-xl transition-all">
             <p className="text-[10px] font-bold uppercase tracking-widest mb-1 text-slate-400 opacity-60">{s.label}</p>
@@ -183,13 +183,13 @@ const DriveDownloader: React.FC = () => {
                 </div>
                 <div>
                   <h3 className="text-2xl font-brand font-extrabold dark:text-white leading-tight">Drive Sync</h3>
-                  <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mt-1 text-indigo-500 underline decoration-indigo-500 underline-offset-4 font-brand">INDUSTRIAL MODE v13.0</p>
+                  <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mt-1 text-indigo-500 underline decoration-indigo-500 underline-offset-4 font-brand">Industrial Studio v13.0</p>
                 </div>
               </div>
               {(results || url || pendingItems.length > 0) && <button onClick={reset} className="p-2 hover:bg-slate-100 dark:hover:bg-white/5 rounded-full text-slate-400 transition-all active:rotate-180"><XIcon className="w-5 h-5" /></button>}
             </div>
 
-            <SheetUploader onData={handleSheetData} isLoading={isProcessing} label="Upload Excel Data Sheet" />
+            <SheetUploader onData={handleSheetData} isLoading={isProcessing} label="Upload Production Sheet" />
             
             <div className="mt-8 relative text-slate-400">
               <div className="absolute inset-y-0 left-0 pl-6 flex items-center pointer-events-none">
@@ -197,7 +197,7 @@ const DriveDownloader: React.FC = () => {
               </div>
               <input
                 type="text"
-                placeholder="Or paste direct Drive folder link..."
+                placeholder="Or paste direct folder link..."
                 className="w-full pl-14 pr-6 py-5 bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-2xl focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all dark:text-white font-medium shadow-inner"
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
@@ -211,13 +211,13 @@ const DriveDownloader: React.FC = () => {
                 className="mt-6 w-full py-6 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-2xl flex items-center justify-center gap-3 shadow-xl shadow-indigo-500/20 transition-all active:scale-95"
               >
                 <RocketIcon className="w-6 h-6" />
-                <span className="uppercase tracking-widest text-sm font-black font-brand">Launch Batch Process</span>
+                <span className="uppercase tracking-widest text-sm font-black font-brand">Launch Production Cycle</span>
               </button>
             )}
 
             <div className="mt-8">
               <div className="flex justify-between items-center mb-2">
-                <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Process Progress</span>
+                <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Total Sync Status</span>
                 <span className="text-[10px] font-bold text-indigo-500">{progress}%</span>
               </div>
               <div className="h-2 w-full bg-slate-100 dark:bg-white/5 rounded-full overflow-hidden">
@@ -229,7 +229,7 @@ const DriveDownloader: React.FC = () => {
           {results && !isProcessing && (
             <button onClick={handleZip} className="w-full py-6 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-[32px] flex items-center justify-center gap-4 shadow-2xl transition-all active:scale-95 group">
               <DownloadIcon className="w-6 h-6 group-hover:translate-y-1 transition-transform" /> 
-              <span className="text-sm uppercase tracking-widest font-extrabold font-brand">Save ZIP Package ({results.files.length} Files)</span>
+              <span className="text-sm uppercase tracking-widest font-extrabold font-brand">Download Catalog Bundle ({results.files.length} Files)</span>
             </button>
           )}
 
@@ -238,7 +238,7 @@ const DriveDownloader: React.FC = () => {
                 <LoaderIcon className="w-8 h-8 text-indigo-500 animate-spin" />
                 <div className="flex flex-col">
                   <span className="text-xs font-black uppercase tracking-widest dark:text-indigo-400 font-brand">
-                    {zipProgress > 0 ? `Packaging Archive: ${zipProgress}%` : 'Sync Engine Active'}
+                    {zipProgress > 0 ? `Compressing Archive: ${zipProgress}%` : 'Sync Engine Active'}
                   </span>
                   {activeTask && <span className="text-slate-400 text-[9px] font-bold uppercase truncate max-w-[250px]">{activeTask}</span>}
                 </div>
