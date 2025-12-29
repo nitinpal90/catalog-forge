@@ -6,65 +6,60 @@ import { DriveFile } from '../types';
  */
 const DRIVE_API_KEY = process.env.API_KEY;
 
+/**
+ * Extracts the ID using the exact logic from your working script
+ */
 export const extractFolderId = (url: string): string | null => {
   if (!url) return null;
-  // Support for full URLs or raw IDs
-  const match = url.match(/\/folders\/([a-zA-Z0-9-_]+)/) || 
-                url.match(/id=([a-zA-Z0-9-_]+)/) ||
-                url.match(/([a-zA-Z0-9-_]{25,})/);
-  
-  if (match) return match[1];
-  // Fallback: If it looks like a raw ID (long enough and alphanumeric)
-  if (url.length > 20 && /^[a-zA-Z0-9-_]+$/.test(url)) return url;
-  return null;
+  const match = url.match(/\/folders\/([a-zA-Z0-9-_]+)/) || url.match(/id=([a-zA-Z0-9-_]+)/);
+  return match ? match[1] : (url.length > 20 ? url : null);
 };
 
+const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
+
 /**
- * Fetches with automatic CORS bypass for the API itself if direct call fails
+ * Standardized fetch with retry, matching your working tool's logic
  */
-async function fetchWithRetry(url: string, retries = 2): Promise<Response> {
-  if (!DRIVE_API_KEY || DRIVE_API_KEY === 'undefined') {
-    throw new Error('System Config Error: API_KEY is missing. Add it to Netlify Environment Variables and REDEPLOY.');
+async function fetchWithRetry(url: string, retries = 3): Promise<Response> {
+  // CRITICAL CHECK: Check if key is missing or invalid placeholder
+  if (!DRIVE_API_KEY || DRIVE_API_KEY === "" || DRIVE_API_KEY === "undefined") {
+    throw new Error('CONFIG_ERROR: Google API Key is missing. Please add "API_KEY" to your Netlify Environment Variables and REDEPLOY.');
   }
 
-  // Attempt direct fetch first
   for (let i = 0; i < retries; i++) {
     try {
       const res = await fetch(url);
       
-      if (res.status === 403) {
-        // If 403, it's a permissions/API setup issue. Try failover to proxy immediately
-        console.warn("Direct API call returned 403. Attempting CORS Proxy Bypass...");
-        break; 
-      }
-      
-      if (res.status === 429) {
-        await new Promise(r => setTimeout(r, 2000));
+      // Handle Rate Limiting or Temporary Errors
+      if (res.status === 403 || res.status === 429) {
+        if (res.status === 403) {
+          const errBody = await res.json().catch(() => ({}));
+          // If the key is specifically blocked or invalid
+          if (errBody.error?.message?.includes('API key not valid')) {
+            throw new Error(`API_KEY_INVALID: The key provided is rejected by Google. Check your Google Cloud Console.`);
+          }
+        }
+        await delay(1500 * (i + 1));
         continue;
       }
       
-      if (res.ok) return res;
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({ error: { message: `HTTP ${res.status} Error` } }));
+        throw new Error(errorData.error?.message || `Access Denied (${res.status})`);
+      }
+      
+      return res;
     } catch (e: any) {
-      if (i === retries - 1) break;
-      await new Promise(r => setTimeout(r, 1000));
+      if (e.message.includes('API_KEY_INVALID') || e.message.includes('CONFIG_ERROR')) throw e;
+      if (i === retries - 1) throw e;
+      await delay(1000);
     }
   }
-
-  // FAILOVER: Use a proxy to call the Google API (Bypasses some region blocks/CORS issues)
-  const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
-  try {
-    const res = await fetch(proxyUrl);
-    if (res.status === 403) {
-       throw new Error('403 Forbidden: 1. Enable "Google Drive API" in Cloud Console. 2. Share folder as "Anyone with link".');
-    }
-    if (res.ok) return res;
-  } catch (e) {}
-
-  throw new Error('Drive API unreachable. Check internet connection and API Key status.');
+  throw new Error('Connection failed after multiple retries.');
 }
 
 /**
- * Fetches all files in a folder using standard pagination (PageSize 100)
+ * Fetches all files using pagination and 1000-item chunks
  */
 export async function fetchAllInFolder(folderId: string): Promise<DriveFile[]> {
   let allFiles: DriveFile[] = [];
@@ -72,17 +67,14 @@ export async function fetchAllInFolder(folderId: string): Promise<DriveFile[]> {
 
   do {
     const query = `'${folderId}' in parents and trashed=false`;
-    // Note: PageSize 100 is the standard maximum for reliable v3 list calls
-    let url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&key=${DRIVE_API_KEY}&fields=nextPageToken,files(id,name,mimeType,parents)&pageSize=100`;
+    // Using pageSize=1000 as per your working source for maximum efficiency
+    let url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&key=${DRIVE_API_KEY}&fields=nextPageToken,files(id,name,mimeType,parents)&pageSize=1000`;
+    
     if (pageToken) url += `&pageToken=${pageToken}`;
 
     const res = await fetchWithRetry(url);
     const data = await res.json();
     
-    if (data.error) {
-      throw new Error(`Google API: ${data.error.message} (Verify "Google Drive API" is ENABLED in Cloud Console)`);
-    }
-
     if (data.files) allFiles = allFiles.concat(data.files);
     pageToken = data.nextPageToken;
   } while (pageToken);
@@ -91,9 +83,8 @@ export async function fetchAllInFolder(folderId: string): Promise<DriveFile[]> {
 }
 
 /**
- * Deep recursive scan for images in all subfolders
+ * Deep recursive scan (Crawl) matching your tool's logic
  */
-// Fix: Updated onLog type definition to support optional severity parameter, matching its internal calls.
 export async function fetchFolderContents(
   folderId: string,
   rootName: string = "Root",
@@ -110,53 +101,49 @@ export async function fetchFolderContents(
       
       for (const item of items) {
         if (item.mimeType === 'application/vnd.google-apps.folder') {
-          onLog?.(`Subfolder detected: ${item.name}`);
+          onLog?.(`Found subfolder: ${item.name}`, 'info');
           subTasks.push(crawl(item.id, item.name));
         } else {
+          // Check if it's an image
           const isImage = /\.(jpg|jpeg|png|webp|gif|bmp|tiff|jfif)$/i.test(item.name) || item.mimeType.startsWith('image/');
           if (isImage) files.push(item);
         }
       }
       await Promise.all(subTasks);
     } catch (e: any) {
-      onLog?.(`Error scanning sub-path ${name}: ${e.message}`, 'error');
-      // Re-throw if it's a fatal config error so we stop the whole process
-      if (e.message.includes('API_KEY')) throw e;
+      onLog?.(`[${name}] Scan Failed: ${e.message}`, 'error');
+      // If it's a configuration error, stop the whole crawl
+      if (e.message.includes('CONFIG_ERROR') || e.message.includes('API_KEY_INVALID')) {
+        throw e;
+      }
     }
   }
 
-  onLog?.(`Initializing Architecture Scan: ${rootName}`);
+  onLog?.(`Scanning Directory: ${rootName}...`, 'info');
   await crawl(folderId, rootName);
   return { files, folders };
 }
 
 /**
- * Downloads a file with multiple failover strategies
+ * Downloads a file using the media endpoint (same as your working tool)
  */
 export const downloadDriveFile = async (id: string): Promise<Blob> => {
-  // Strategy 1: Direct v3 API media fetch
   const url = `https://www.googleapis.com/drive/v3/files/${id}?alt=media&key=${DRIVE_API_KEY}`;
-  
-  // Strategy 2: High-speed proxy bypass (CORS friendly)
   const proxyUrl = `https://wsrv.nl/?url=${encodeURIComponent(`https://drive.google.com/uc?export=download&id=${id}`)}&output=jpg&q=100`;
 
-  // Strategy 3: Universal CORS Proxy failover
-  const failoverUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://drive.google.com/uc?export=download&id=${id}`)}`;
+  const attempts = [url, proxyUrl];
 
-  const downloadNodes = [url, proxyUrl, failoverUrl];
-
-  for (const node of downloadNodes) {
+  for (const node of attempts) {
     try {
       const res = await fetch(node);
       if (res.ok) {
         const b = await res.blob();
-        // Validate that we didn't get an HTML error page (usually < 1KB) instead of an image
-        if (b.size > 1000 && !b.type.includes('html')) return b;
+        if (b.size > 500 && !b.type.includes('html')) return b;
       }
     } catch (e) {
-      console.debug(`Node failed, switching...`);
+      continue;
     }
   }
 
-  throw new Error(`Extraction failed for asset ${id}. Ensure the folder is shared as 'Anyone with the link can view'.`);
+  throw new Error(`Failed to extract asset ${id}. Ensure folder is Shared as 'Anyone with link'.`);
 };

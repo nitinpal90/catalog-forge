@@ -5,8 +5,8 @@ export default defineConfig({
   plugins: [react()],
   base: '/',
   define: {
-    // This allows the code to access the environment variable in the browser
-    'process.env.API_KEY': JSON.stringify(process.env.API_KEY),
+    // Ensuring the API_KEY is stringified safely even if missing during build
+    'process.env.API_KEY': JSON.stringify(process.env.API_KEY || ""),
   },
   build: {
     outDir: 'dist',
