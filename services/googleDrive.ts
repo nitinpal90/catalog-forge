@@ -1,14 +1,13 @@
 import { DriveFile } from '../types';
 
 /**
- * Industrial Security: 
  * Accesses API_KEY from the environment.
+ * In Netlify, this comes from Site Configuration > Environment Variables.
  */
 const DRIVE_API_KEY = process.env.API_KEY;
 
 /**
- * Extracts the ID using precise pattern matching.
- * Supports full URLs, share links, and raw IDs.
+ * Extracts the ID using the exact logic from your working 'Final Engine'
  */
 export const extractFolderId = (url: string): string | null => {
   if (!url) return null;
@@ -17,56 +16,53 @@ export const extractFolderId = (url: string): string | null => {
                 url.match(/\/d\/([a-zA-Z0-9-_]+)/);
   
   if (match) return match[1];
-  // Fallback: If it's a raw ID (roughly 25+ chars, alphanumeric)
-  if (url.trim().length >= 25 && /^[a-zA-Z0-9-_]+$/.test(url.trim())) return url.trim();
+  // Fallback for raw IDs
+  if (url.trim().length >= 25) return url.trim();
   return null;
 };
 
 const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
 
 /**
- * Industrial Proxy Hub:
- * If the direct Google API call fails (common with CORS in browser),
- * we automatically pivot to high-bandwidth proxies.
+ * Standardized fetch with retry (Direct API calls for metadata)
+ * Matching the working tool's logic: No proxies for folder listing.
  */
 async function fetchWithRetry(url: string, retries = 3): Promise<Response> {
   if (!DRIVE_API_KEY || DRIVE_API_KEY === "" || DRIVE_API_KEY === "undefined") {
-    throw new Error('CONFIG_ERROR: API_KEY is missing. Check Netlify Environment Variables.');
+    throw new Error('CONFIG_ERROR: API_KEY is missing. Add it to Netlify Env Variables.');
   }
-
-  const nodes = [
-    url, // 1. Direct
-    `https://corsproxy.io/?${encodeURIComponent(url)}`, // 2. High Stability Proxy
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}` // 3. Backup Proxy
-  ];
 
   for (let i = 0; i < retries; i++) {
-    for (const node of nodes) {
-      try {
-        const res = await fetch(node);
-        
-        if (res.status === 403 || res.status === 429) {
-          const errBody = await res.json().catch(() => ({}));
-          if (errBody.error?.message?.includes('API key not valid')) {
-            throw new Error(`API_KEY_INVALID: Key rejected by Google.`);
-          }
-          continue; // Try next node or retry
+    try {
+      const res = await fetch(url);
+      
+      if (res.status === 403 || res.status === 429) {
+        const errBody = await res.json().catch(() => ({}));
+        if (errBody.error?.message?.includes('API key not valid')) {
+          throw new Error(`API_KEY_INVALID: Check your Google Cloud Console Key.`);
         }
-        
-        if (res.ok) return res;
-      } catch (e: any) {
-        if (e.message.includes('API_KEY_INVALID')) throw e;
-        continue; // Try next node
+        await delay(1500 * (i + 1));
+        continue; 
       }
+      
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({ error: { message: `HTTP ${res.status}` } }));
+        throw new Error(errorData.error?.message || 'Access Denied');
+      }
+      
+      return res;
+    } catch (e: any) {
+      if (e.message.includes('API_KEY_INVALID')) throw e;
+      if (i === retries - 1) throw e;
+      await delay(1000);
     }
-    await delay(2000 * (i + 1));
   }
-  
-  throw new Error('INDUSTRIAL_TIMEOUT: Connection failed after multiple node retries. Check internet or API quota.');
+  throw new Error('Connection failed after multiple retries.');
 }
 
 /**
- * Fetches all files using pagination and max-efficiency chunks (1000 items)
+ * Fetches all files using pagination (Fix for 100+ images)
+ * Uses pageSize=1000 for maximum efficiency.
  */
 export async function fetchAllInFolder(folderId: string): Promise<DriveFile[]> {
   let allFiles: DriveFile[] = [];
@@ -74,7 +70,7 @@ export async function fetchAllInFolder(folderId: string): Promise<DriveFile[]> {
 
   do {
     const query = `'${folderId}' in parents and trashed=false`;
-    let url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&key=${DRIVE_API_KEY}&fields=nextPageToken,files(id,name,mimeType,parents)&pageSize=1000`;
+    let url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&key=${DRIVE_API_KEY}&fields=nextPageToken,files(id,name,mimeType)&pageSize=1000`;
     
     if (pageToken) url += `&pageToken=${pageToken}`;
 
@@ -89,8 +85,7 @@ export async function fetchAllInFolder(folderId: string): Promise<DriveFile[]> {
 }
 
 /**
- * Industrial Recursive Scanner:
- * Crawls entire folder structures to locate all nested image assets.
+ * Industrial Recursive Scanner (Matches 'crawlFolder' in your working code)
  */
 export async function fetchFolderContents(
   folderId: string,
@@ -111,8 +106,14 @@ export async function fetchFolderContents(
           onLog?.(`Subfolder Found: ${item.name}`, 'info');
           subTasks.push(crawl(item.id, item.name));
         } else {
-          const isImage = /\.(jpg|jpeg|png|webp|gif|bmp|tiff|jfif)$/i.test(item.name) || item.mimeType.startsWith('image/');
-          if (isImage) files.push(item);
+          // Identify image assets
+          const isImage = /\.(jpg|jpeg|png|webp|gif|bmp|tiff|jfif)$/i.test(item.name) || 
+                          item.mimeType.startsWith('image/');
+          if (isImage) {
+            // Store the file and its immediate parent ID for naming
+            const fileWithParent = { ...item, parents: [id] };
+            files.push(fileWithParent);
+          }
         }
       }
       await Promise.all(subTasks);
@@ -128,28 +129,23 @@ export async function fetchFolderContents(
 }
 
 /**
- * High-Speed Binary Extraction:
- * Downloads original files via media stream or proxy failover.
+ * Downloads a file using the media endpoint (Exact same as working tool)
  */
 export const downloadDriveFile = async (id: string): Promise<Blob> => {
   const url = `https://www.googleapis.com/drive/v3/files/${id}?alt=media&key=${DRIVE_API_KEY}`;
   
-  // High reliability proxy for raw binary stream (Bypasses most CORS and Origin blocks)
-  const proxyUrl = `https://wsrv.nl/?url=${encodeURIComponent(`https://drive.google.com/uc?export=download&id=${id}`)}&output=jpg&q=100`;
-
-  const attempts = [url, proxyUrl];
-
-  for (const node of attempts) {
-    try {
-      const res = await fetch(node);
-      if (res.ok) {
-        const b = await res.blob();
-        if (b.size > 500 && !b.type.includes('html')) return b;
-      }
-    } catch (e) {
-      continue;
+  try {
+    const res = await fetch(url);
+    if (res.ok) {
+      const b = await res.blob();
+      if (b.size > 100 && !b.type.includes('html')) return b;
     }
+  } catch (e) {
+    // Fallback only if direct fails
+    const proxyUrl = `https://wsrv.nl/?url=${encodeURIComponent(`https://drive.google.com/uc?export=download&id=${id}`)}&output=jpg&q=100`;
+    const res = await fetch(proxyUrl);
+    if (res.ok) return await res.blob();
   }
 
-  throw new Error(`EXTRACTION_FAILED: Asset ${id} unreachable. Verify "Anyone with the link" permissions.`);
+  throw new Error(`Extraction failed for ${id}. Check file sharing permissions.`);
 };

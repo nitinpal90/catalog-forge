@@ -20,13 +20,13 @@ const DriveDownloader: React.FC = () => {
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const addLog = (message: string, type: LogEntry['type'] = 'info') => {
-    setLogs(prev => [...prev, { timestamp: new Date(), message, type }].slice(-200));
+    setLogs(prev => [...prev, { timestamp: new Date(), message, type }].slice(-250));
   };
 
   const handleSheetData = (items: { folderName: string, urls: string[] }[]) => {
     setPendingItems(items);
     setStats(s => ({ ...s, skus: items.length }));
-    addLog(`Catalog Sheet Detected: ${items.length} SKUs added to queue.`, 'success');
+    addLog(`Production Sheet Loaded: ${items.length} SKUs detected.`, 'success');
   };
 
   const reset = () => {
@@ -55,32 +55,33 @@ const DriveDownloader: React.FC = () => {
     const allFiles: ProcessedFile[] = [];
     const summaries: BatchSummary[] = [];
 
-    addLog(`Industrial Sync Engine v13.0: Startup Initialized`, 'success');
+    addLog(`Industrial Sync Engine v13.0: Starting Cycle...`, 'success');
 
     for (const item of items) {
       if (abortControllerRef.current?.signal.aborted) break;
 
       const safeFolderName = item.folderName.trim().replace(/\s+/g, '_') || "Uncategorized";
       setActiveTask(`Syncing: ${safeFolderName}`);
-      addLog(`[${safeFolderName}] Resolving Drive Map...`);
+      addLog(`[${safeFolderName}] Scanning Drive structure...`);
       
       try {
         const folderId = extractFolderId(item.urls[0]);
-        if (!folderId) throw new Error("Link format unrecognized.");
+        if (!folderId) throw new Error("Link format invalid.");
 
         const { files, folders } = await fetchFolderContents(folderId, safeFolderName, (msg, type) => addLog(msg, type));
         
         if (files.length === 0) {
-          addLog(`[${safeFolderName}] 0 assets located. Ensure link is public.`, 'warning');
+          addLog(`[${safeFolderName}] 0 assets found. Ensure link is public and contains images.`, 'warning');
           setStats(s => ({ ...s, processed: s.processed + 1 }));
           summaries.push({ styleName: safeFolderName, sourceLink: item.urls[0], status: 'Failed', filesFound: 0, notes: "No images detected." });
         } else {
-          addLog(`[${safeFolderName}] Binary Stream: Extracting ${files.length} images...`);
+          addLog(`[${safeFolderName}] Found ${files.length} images. Starting download...`);
 
           const { results: downloadedFiles, failed } = await downloadBatch<DriveFile>(
             files,
             async (df, idx) => {
               const blob = await downloadDriveFile(df.id);
+              // Match naming logic from your script
               const parentName = folders.get(df.parents?.[0] || "") || safeFolderName;
               const ext = getExtension(blob, df.name);
               
@@ -92,7 +93,7 @@ const DriveDownloader: React.FC = () => {
                 size: blob.size
               };
             },
-            10, // Stability concurrency
+            10, // Max concurrent downloads for stability
             undefined,
             abortControllerRef.current?.signal || undefined
           );
@@ -105,7 +106,7 @@ const DriveDownloader: React.FC = () => {
               assets: s.assets + downloadedFiles.length,
               errors: s.errors + failed
             }));
-            addLog(`[${safeFolderName}] Finished. Resolved ${downloadedFiles.length} files.`, 'success');
+            addLog(`[${safeFolderName}] Success: Captured ${downloadedFiles.length} files.`, 'success');
           }
 
           summaries.push({
@@ -113,7 +114,7 @@ const DriveDownloader: React.FC = () => {
             sourceLink: item.urls[0],
             status: downloadedFiles.length > 0 ? (failed > 0 ? 'Partial' : 'Success') : 'Failed',
             filesFound: downloadedFiles.length,
-            notes: failed > 0 ? `Issues with ${failed} items.` : "Verified."
+            notes: failed > 0 ? `Issues with ${failed} images.` : "Verified."
           });
         }
       } catch (e: any) {
@@ -127,9 +128,9 @@ const DriveDownloader: React.FC = () => {
 
     if (allFiles.length > 0) {
       setResults({ files: allFiles, summaries });
-      addLog(`Global Sync Complete. Total: ${allFiles.length} Assets Captured.`, 'success');
+      addLog(`Global Sync Complete. Total captured: ${allFiles.length}`, 'success');
     } else {
-      addLog(`Critical: 0 items yielded from sync. Check project configuration.`, 'error');
+      addLog(`Critical: No assets were captured in this run.`, 'error');
     }
     
     setIsProcessing(false);
@@ -148,7 +149,7 @@ const DriveDownloader: React.FC = () => {
       a.download = `Catalog_Sync_Export_${Date.now()}.zip`;
       a.click();
       window.URL.revokeObjectURL(dlUrl);
-      addLog("Export complete. Batch successfully standardizied.", "success");
+      addLog("Export complete. Batch successfully standardized.", "success");
     } catch (e: any) {
       addLog(`Archive Engine Failure: ${e.message}`, 'error');
     } finally {
@@ -163,7 +164,7 @@ const DriveDownloader: React.FC = () => {
         {[
           { label: 'Total Links', val: stats.skus, color: 'text-slate-400' },
           { label: 'Processed', val: stats.processed, color: 'text-indigo-500' },
-          { label: 'Images Saved', val: stats.assets, color: 'text-emerald-500' },
+          { label: 'Assets Saved', val: stats.assets, color: 'text-emerald-500' },
           { label: 'Failures', val: stats.errors, color: 'text-red-500' },
         ].map((s, i) => (
           <div key={i} className="bg-white dark:bg-white/5 p-8 rounded-[32px] border border-slate-100 dark:border-white/5 shadow-xl transition-all">
