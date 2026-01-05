@@ -1,4 +1,3 @@
-
 import React, { useState, useRef } from 'react';
 import { LogEntry, ProcessedFile } from '../../types';
 import { createFinalArchive } from '../../services/fileProcessor';
@@ -20,11 +19,25 @@ const AssetClassifier: React.FC = () => {
   };
 
   /**
-   * Industrial Asset Classifier & Renamer
-   * 1. Groups files by SKU prefix
-   * 2. Sorts files naturally within groups
-   * 3. Renames to [FOLDERNAME]_[INDEX].[EXT]
+   * Industrial Prefix Detector v2.0
    */
+  const extractSkuPrefix = (name: string): string => {
+    if (name.includes('_')) return name.split('_')[0].trim();
+    if (name.includes('-')) return name.split('-')[0].trim();
+    if (name.includes(' ')) return name.split(' ')[0].trim();
+
+    const numericMatch = name.match(/^(\d+)/);
+    if (numericMatch && numericMatch[0].length >= 2) return numericMatch[0];
+
+    const smartMatch = name.match(/^([A-Z0-9]+?)(?=[a-z\s.]|$)/);
+    if (smartMatch && smartMatch[1].length >= 2) return smartMatch[1];
+
+    const alphaNumMatch = name.match(/^([a-zA-Z0-9]+)/);
+    if (alphaNumMatch) return alphaNumMatch[1].substring(0, 8);
+
+    return "UNMATCHED";
+  };
+
   const classifyAndRenameFolder = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const rawFiles = e.target.files;
     if (!rawFiles || rawFiles.length === 0) return;
@@ -40,23 +53,15 @@ const AssetClassifier: React.FC = () => {
     const groups: Record<string, File[]> = {};
     let unmatchedCount = 0;
 
-    // Step 1: Initial Grouping & Validation
+    // Step 1: Initial Grouping
     fileArray.forEach((file) => {
       const fileName = file.name;
       if (fileName.startsWith('.') || fileName.startsWith('__')) return;
-      if (!/\.(jpg|jpeg|png|webp)$/i.test(fileName)) return;
+      if (!/\.(jpg|jpeg|png|webp|jfif)$/i.test(fileName)) return;
 
-      const parts = fileName.split('_');
-      let folderName = "UNMATCHED";
+      const folderName = extractSkuPrefix(fileName);
       
-      if (parts.length > 1) {
-        const prefix = parts[0].trim();
-        if (prefix) {
-          folderName = prefix;
-        } else {
-          unmatchedCount++;
-        }
-      } else {
+      if (folderName === "UNMATCHED") {
         unmatchedCount++;
       }
 
@@ -69,15 +74,12 @@ const AssetClassifier: React.FC = () => {
     const skuList = Object.keys(groups).filter(k => k !== "UNMATCHED");
 
     Object.keys(groups).forEach((folderName) => {
-      // Natural Alphanumeric Sort (e.g., image_2 comes before image_10)
       const sortedInGroup = groups[folderName].sort((a, b) => 
         a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
       );
 
       sortedInGroup.forEach((file, index) => {
         const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg';
-        
-        // Applying the Strict Renaming Format: FOLDERNAME_1.ext
         const sequenceNumber = index + 1;
         const renamedFilename = `${folderName}_${sequenceNumber}.${ext}`;
 
@@ -165,7 +167,7 @@ const AssetClassifier: React.FC = () => {
                   <LayoutGridIcon className="w-6 h-6" />
                 </div>
                 <div>
-                  <h3 className="text-2xl font-brand font-extrabold dark:text-white leading-tight">Supplier Classifier</h3>
+                  <h3 className="text-2xl font-brand font-extrabold dark:text-white leading-tight">Forge Engine</h3>
                   <p className="text-slate-400 text-xs font-bold uppercase tracking-widest mt-1">Classification & Renaming</p>
                 </div>
               </div>
@@ -197,15 +199,15 @@ const AssetClassifier: React.FC = () => {
                 <FolderIcon className="w-10 h-10 text-emerald-600" />
               </div>
               <p className="text-slate-900 dark:text-white font-black text-xl mb-2">Select Mixed Supplier Folder</p>
-              <p className="text-slate-500 text-xs font-medium uppercase tracking-widest">Auto-Sorts & Renames Sequence</p>
+              <p className="text-slate-500 text-xs font-medium uppercase tracking-widest">Auto-Detects 7954, SKU123, etc.</p>
             </div>
 
             <div className="mt-10 bg-slate-50 dark:bg-white/5 p-6 rounded-3xl border border-slate-100 dark:border-white/5">
-              <h5 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4">Sequence Renaming Logic</h5>
+              <h5 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4">Industrial Rule Engine</h5>
               <div className="flex flex-col gap-3">
                 <div className="flex items-center gap-3">
                   <span className="w-4 h-4 rounded-full bg-emerald-500 flex-shrink-0"></span>
-                  <span className="text-[11px] font-bold dark:text-slate-300">Renames to <code className="text-indigo-500 px-2 py-1 bg-white dark:bg-white/10 rounded">SKU_1.jpg</code>, <code className="text-indigo-500 px-2 py-1 bg-white dark:bg-white/10 rounded">SKU_2.jpg</code></span>
+                  <span className="text-[11px] font-bold dark:text-slate-300">Smart prefix detection (Numbers & Chars)</span>
                 </div>
                 <div className="flex items-center gap-3">
                   <span className="w-4 h-4 rounded-full bg-indigo-500 flex-shrink-0"></span>

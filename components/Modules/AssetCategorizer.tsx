@@ -1,4 +1,3 @@
-
 import React, { useState, useRef } from 'react';
 import { LogEntry, ProcessedFile } from '../../types';
 import { createFinalArchive } from '../../services/fileProcessor';
@@ -15,6 +14,32 @@ const AssetCategorizer: React.FC = () => {
 
   const addLog = (msg: string, type: LogEntry['type'] = 'info') => {
     setLogs(prev => [...prev, { timestamp: new Date(), message: msg, type }].slice(-250));
+  };
+
+  /**
+   * Industrial Prefix Detector v2.0
+   * Extracts SKU/Barcode from filenames with or without separators.
+   */
+  const extractSkuPrefix = (name: string): string => {
+    // 1. Try traditional separators first
+    if (name.includes('_')) return name.split('_')[0].trim();
+    if (name.includes('-')) return name.split('-')[0].trim();
+    if (name.includes(' ')) return name.split(' ')[0].trim();
+
+    // 2. Handle numeric prefixes without separators (e.g., 7954e.jpg -> 7954)
+    const numericMatch = name.match(/^(\d+)/);
+    if (numericMatch && numericMatch[0].length >= 2) return numericMatch[0];
+
+    // 3. Handle Alphanumeric prefixes (e.g., ABC123x.jpg -> ABC123)
+    // Matches leading uppercase/numbers block before lowercase color/view code
+    const smartMatch = name.match(/^([A-Z0-9]+?)(?=[a-z\s.]|$)/);
+    if (smartMatch && smartMatch[1].length >= 2) return smartMatch[1];
+
+    // 4. Fallback for mixed alphanumeric
+    const alphaNumMatch = name.match(/^([a-zA-Z0-9]+)/);
+    if (alphaNumMatch) return alphaNumMatch[1].substring(0, 8); // Take first 8 chars
+
+    return "UNMATCHED";
   };
 
   const processCategorization = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -38,26 +63,19 @@ const AssetCategorizer: React.FC = () => {
       // Filter system clutter
       if (fileName.startsWith('.') || fileName.startsWith('__')) return;
       // Image validation
-      if (!/\.(jpg|jpeg|png|webp|gif)$/i.test(fileName)) return;
+      if (!/\.(jpg|jpeg|png|webp|gif|jfif)$/i.test(fileName)) return;
 
-      const parts = fileName.split('_');
-      let folderName = "UNMATCHED";
+      const folderName = extractSkuPrefix(fileName);
       
-      if (parts.length > 1) {
-        const prefix = parts[0].trim();
-        if (prefix) {
-          folderName = prefix;
-          skuSet.add(folderName.toUpperCase());
-        } else {
-          unmatched++;
-        }
-      } else {
+      if (folderName === "UNMATCHED") {
         unmatched++;
+      } else {
+        skuSet.add(folderName.toUpperCase());
       }
 
       processed.push({
         originalName: fileName,
-        newName: fileName, // Preserve original name during categorization
+        newName: fileName, 
         blob: file as Blob,
         folder: folderName,
         size: file.size
@@ -127,7 +145,7 @@ const AssetCategorizer: React.FC = () => {
                 </div>
                 <div>
                   <h3 className="text-2xl font-brand font-extrabold dark:text-white leading-tight">Asset Categorizer</h3>
-                  <p className="text-slate-400 text-xs font-bold uppercase tracking-widest mt-1">Automatic SKU Sorter</p>
+                  <p className="text-slate-400 text-xs font-bold uppercase tracking-widest mt-1">Industrial SKU Sorter</p>
                 </div>
               </div>
               {results && !isProcessing && <button onClick={reset} className="p-2 text-slate-400 hover:bg-slate-100 dark:hover:bg-white/5 rounded-full"><XIcon className="w-5 h-5" /></button>}
@@ -139,7 +157,6 @@ const AssetCategorizer: React.FC = () => {
                 isProcessing ? 'opacity-50 pointer-events-none' : 'border-slate-200 dark:border-white/10 hover:border-emerald-400 hover:bg-emerald-50/10'
               }`}
             >
-              {/* Added @ts-ignore to bypass non-standard webkitdirectory and directory attribute check */}
               <input 
                 type="file" 
                 ref={folderInputRef} 
@@ -153,7 +170,7 @@ const AssetCategorizer: React.FC = () => {
                 <FolderIcon className="w-10 h-10 text-emerald-600" />
               </div>
               <p className="text-slate-900 dark:text-white font-black text-xl mb-2">Select Mixed Assets Folder</p>
-              <p className="text-slate-500 text-xs font-medium uppercase tracking-widest italic">Folders created based on prefix before first underscore</p>
+              <p className="text-slate-500 text-xs font-medium uppercase tracking-widest italic">Smart Detector: Works with 7954e.jpg, ABC_1.jpg, etc.</p>
             </div>
           </div>
 
